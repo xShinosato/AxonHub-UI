@@ -473,8 +473,8 @@ Library._buildYield = buildYield
 -- Marquee
 local MARQUEE_SPEED = 28 -- px per second
 local function marquee(parent, props, getScale, isShown)
-	local box = new("CanvasGroup", { Name = "Marquee", Size = UDim2.fromOffset(0, props.Height), BackgroundTransparency = 1, LayoutOrder = props.LayoutOrder or 0, Parent = parent })
-	local fade = gradient({ Enabled = false, Transparency = NumberSequence.new({ kp(0, 1), kp(0.16, 0), kp(0.84, 0), kp(1, 1) }), Parent = box })
+	local box = new("Frame", { Name = "Marquee", Size = UDim2.fromOffset(0, props.Height), BackgroundTransparency = 1, ClipsDescendants = true, LayoutOrder = props.LayoutOrder or 0, Parent = parent })
+	local edge
 	local strip = new("Frame", { Size = UDim2.fromScale(0, 1), AutomaticSize = Enum.AutomaticSize.X, BackgroundTransparency = 1, Parent = box }, {
 		new("UIListLayout", { FillDirection = Enum.FillDirection.Horizontal, VerticalAlignment = Enum.VerticalAlignment.Center, SortOrder = Enum.SortOrder.LayoutOrder }),
 	})
@@ -495,7 +495,15 @@ local function marquee(parent, props, getScale, isShown)
 		M.Scrolling = scroll
 		a.Text = scroll and (base .. sep) or base
 		b.Text = base .. sep
-		b.Visible, fade.Enabled = scroll, scroll
+		b.Visible = scroll
+		if scroll and not edge then
+			edge = new("CanvasGroup", { Size = UDim2.fromScale(1, 1), BackgroundTransparency = 1, Parent = box })
+			gradient({ Transparency = NumberSequence.new({ kp(0, 1), kp(0.16, 0), kp(0.84, 0), kp(1, 1) }), Parent = edge })
+		end
+		if edge then
+			strip.Parent = scroll and edge or box
+			edge.Visible = scroll
+		end
 		box.Size = UDim2.fromOffset(scroll and M.MaxWidth or math.ceil(textW) + 2, props.Height)
 		if not scroll then strip.Position = UDim2.new() end
 	end
@@ -562,6 +570,7 @@ Screen.Parent = guiParent()
 Library.ScreenGui = Screen
 
 local isTouch = UserInputService.TouchEnabled and not UserInputService.MouseEnabled
+BUILD_BUDGET = isTouch and 0.004 or 0.006 -- phones get a smaller slice per frame
 
 -- Notifications
 local TOAST = {
@@ -587,7 +596,6 @@ local notifyScale = new("UIScale", { Parent = NotifyHolder })
 local function placeHolder()
 	local vp = viewport()
 	local w = toastWidth()
-	-- phones: toasts at 80%, like the status bar, so they do not cover the window
 	local phone = isTouch and (vp.Y < 560 or vp.X < 760)
 	notifyScale.Scale = phone and 0.8 or 1
 	NotifyHolder.Size = UDim2.fromOffset(w, (vp.Y - TOAST.Margin * 2) / notifyScale.Scale)
@@ -863,6 +871,8 @@ end
 -- Window
 function Library:CreateWindow(opts)
 	opts = opts or {}
+	if coroutine.isyieldable() then RunService.Heartbeat:Wait() end
+	sliceStart = os.clock()
 	if opts.Accent and typeof(opts.Accent) == "Color3" then
 		local h, s, v = opts.Accent:ToHSV()
 		T.Accent = opts.Accent
@@ -911,10 +921,10 @@ function Library:CreateWindow(opts)
 
 	local glow = glowAsset()
 
-	local useBlur = opts.Blur ~= false
+	local useBlur = opts.Blur == true or (opts.Blur ~= false and not isTouch)
 	local surface = new("Frame", { Name = "Surface", Size = UDim2.fromScale(1, 1), ClipsDescendants = true, Parent = root })
-	-- on touch the game's own buttons sit under the window: a denser surface keeps them from showing through
-	darkGlass(surface, R.Window, isTouch and 0.05 or (useBlur and 0.2 or 0.08))
+	local SURFACE_ALPHA = isTouch and 0.05 or (useBlur and 0.2 or 0.08)
+	darkGlass(surface, R.Window, SURFACE_ALPHA)
 	local blur
 	if useBlur then
 		pcall(function()
@@ -926,6 +936,7 @@ function Library:CreateWindow(opts)
 	end
 	Window._blur = blur
 
+	buildYield()
 	-- drifting "A" watermarks, like the banner background
 	local fx = new("Frame", { Name = "Backdrop", Size = UDim2.fromScale(1, 1), BackgroundTransparency = 1, ClipsDescendants = true, Parent = surface })
 	local marks = {}
@@ -938,12 +949,14 @@ function Library:CreateWindow(opts)
 			marks[i] = { m, spec[1], spec[2], spec[4] }
 		end
 	end
-	animate(function(t)
-		for i, m in ipairs(marks) do
-			m[1].Position = UDim2.fromScale(m[2] + math.sin(t * 0.12 + i) * 0.02, m[3] + math.cos(t * 0.1 + i * 2) * 0.03)
-			m[1].Rotation = m[4] + math.sin(t * 0.15 + i) * 4
-		end
-	end, function() return root.Visible end)
+	if not isTouch then -- phones: still watermarks
+		animate(function(t)
+			for i, m in ipairs(marks) do
+				m[1].Position = UDim2.fromScale(m[2] + math.sin(t * 0.12 + i) * 0.02, m[3] + math.cos(t * 0.1 + i * 2) * 0.03)
+				m[1].Rotation = m[4] + math.sin(t * 0.15 + i) * 4
+			end
+		end, function() return root.Visible end)
+	end
 
 	local top = new("Frame", { Name = "TopBar", Size = UDim2.new(1, 0, 0, TOP_H), BackgroundTransparency = 1, Parent = surface })
 	local brandLogo = logo(top, LOGO, { AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.new(0, 32, 0.5, 0) })
@@ -1031,6 +1044,7 @@ function Library:CreateWindow(opts)
 	indStroke.Transparency = 1
 	Window._indStroke = indStroke
 
+	buildYield()
 	-- rail menu button: opens the drawer that names every tab
 	local menuRow = new("TextButton", { Text = "", Size = UDim2.new(1, 0, 0, TAB_H), BackgroundColor3 = WHITE, BackgroundTransparency = 1, LayoutOrder = -1000, ZIndex = 2, Visible = false, Parent = tabList }, { corner(R.Control) })
 	local menuIcon = icon(menuRow, "menu", 16, T.Sub, { AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.new(0, 18, 0.5, 0), ZIndex = 3 })
@@ -1064,6 +1078,7 @@ function Library:CreateWindow(opts)
 	local tile = new("Frame", { AnchorPoint = Vector2.new(0.5, 0), Position = UDim2.fromScale(0.5, 0), Size = UDim2.fromOffset(56, 56), Parent = empty })
 	glass(tile, R.Panel + 3, 0.07, 0.82)
 	local emptyLogo = logo(tile, 28, { AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromScale(0.5, 0.5) })
+	buildYield()
 	-- skeleton rows with a shimmer sweeping across
 	local shimmers = {}
 	for i, w in ipairs({ 140, 96 }) do
@@ -1079,6 +1094,7 @@ function Library:CreateWindow(opts)
 		for i, g in ipairs(shimmers) do g.Offset = Vector2.new(((t * 0.6 + i * 0.15) % 1.6) - 0.8, 0) end
 	end, function() return empty.Visible and root.Visible end)
 
+	buildYield()
 	-- overlay layer (dialogs, palette)
 	local overlay = new("Frame", { Name = "Overlay", Size = UDim2.fromScale(1, 1), BackgroundTransparency = 1, ZIndex = 50, Parent = surface })
 
@@ -1145,8 +1161,7 @@ function Library:CreateWindow(opts)
 	drawerCatcher.Activated:Connect(function() setDrawer(false) end)
 
 	local MIN_W, MIN_H = 340, 260
-	-- phones: build at a compact size, then scale into ~3/4 of the width so the
-	-- game's own side buttons, thumbstick and jump button stay free
+	buildYield()
 	local PHONE_W, PHONE_H = 620, 380
 	local function isPhone(vp) return vp.Y < 560 or vp.X < 760 end
 	Window._isPhone = function() return isPhone(viewport()) end
@@ -1217,6 +1232,32 @@ function Library:CreateWindow(opts)
 		task.delay(0.52, function() sq:Destroy() end)
 	end
 
+	local cover = new("Frame", { Name = "Cover", Size = UDim2.fromScale(1, 1), BackgroundTransparency = 1, ZIndex = 150, Visible = false, Parent = surface })
+	darkGlass(cover, R.Window, SURFACE_ALPHA):Destroy()
+	cover.BackgroundTransparency = 1
+	local ghost
+	local function killGhost() if ghost then ghost:Destroy() ghost = nil end end
+	local function makeGhost()
+		killGhost()
+		local g = new("Frame", { Name = "Ghost", AnchorPoint = Vector2.new(0.5, 0.5), Size = root.Size, BackgroundTransparency = 1, ZIndex = 90, Parent = Screen })
+		local gs = darkGlass(g, R.Window, SURFACE_ALPHA)
+		local side = new("Frame", { Position = UDim2.fromOffset(L_.INSET, TOP_H), Size = UDim2.new(0, L_.SIDE_W, 1, -(TOP_H + L_.INSET)), ZIndex = 91, Parent = g })
+		local ss = panelGlass(side)
+		local sc = new("UIScale", { Parent = g })
+		ghost = g
+		local parts = {
+			{ g, "BackgroundTransparency", 1 - SURFACE_ALPHA }, { gs, "Transparency", 0.88 },
+			{ side, "BackgroundTransparency", side.BackgroundTransparency }, { ss, "Transparency", ss.Transparency },
+		}
+		local function fade(alpha, t, style, dir)
+			for _, pt in ipairs(parts) do
+				local target = alpha == 1 and 1 or pt[3]
+				if t == 0 then pt[1][pt[2]] = target else tw(pt[1], t, { [pt[2]] = target }, style, dir) end
+			end
+		end
+		return g, sc, fade
+	end
+
 	local function setVisible(v, instant)
 		if v == Window.Visible and revealed then return end
 		Window.Visible = v
@@ -1224,41 +1265,30 @@ function Library:CreateWindow(opts)
 		animId += 1
 		local id = animId
 		local s = Window._scale or 1
+		killGhost()
 		if v then
 			local first = not revealed
 			revealed = true
-			root.Visible = true
 			local home = homePos or root.Position
 			homePos = home
 			opening = true
-			if blur then tw(blur, 0.45, { Size = 14 }) end
+			if blur then blur.Enabled = true tw(blur, 0.45, { Size = 14 }) end
 			if instant then
 				exitGroup()
+				cover.Visible = false
 				root.Position, scale.Scale = home, s
+				root.Visible = true
 				opening = false
-			else
+			elseif first and not isTouch then
+				root.Visible = true
 				enterGroup()
 				if Window._prebuild then Window._prebuild() end
-				local final = screenCenter(home)
-				local size = root.AbsoluteSize / scale.Scale * s
-				if first then
-					root.Position = home
-					scale.Scale = s * 0.9
-					fadeGroup.GroupTransparency = 1
-					tw(scale, 0.5, { Scale = s }, Back)
-					tw(fadeGroup, 0.3, { GroupTransparency = 0 })
-					if Window._build then Window._build(0.08) end
-				else
-					local from = toggleAnchor()
-					root.Position = UDim2.fromOffset(from.X, from.Y)
-					scale.Scale = s * TINY / math.max(1, root.Size.X.Offset)
-					fadeGroup.GroupTransparency = 1
-					local info = TweenInfo.new(OPEN_T, Quint, Enum.EasingDirection.Out)
-					TweenService:Create(root, info, { Position = home }):Play()
-					TweenService:Create(scale, info, { Scale = s }):Play()
-					TweenService:Create(fadeGroup, TweenInfo.new(OPEN_T * 0.7, Quint, Enum.EasingDirection.Out), { GroupTransparency = 0 }):Play()
-					if Window._build then Window._build(OPEN_T * 0.35) end
-				end
+				root.Position = home
+				scale.Scale = s * 0.9
+				fadeGroup.GroupTransparency = 1
+				tw(scale, 0.5, { Scale = s }, Back)
+				tw(fadeGroup, 0.3, { GroupTransparency = 0 })
+				if Window._build then Window._build(0.08) end
 				task.delay(0.65, function()
 					if id == animId and Window.Visible then
 						exitGroup()
@@ -1267,30 +1297,74 @@ function Library:CreateWindow(opts)
 						if Window._settleTabs then Window._settleTabs() end
 					end
 				end)
+			else
+				root.Visible = false
+				exitGroup()
+				root.Position, scale.Scale = home, s
+				local g, gsc, fade = makeGhost()
+				local final = screenCenter(home)
+				local from = first and final or toggleAnchor()
+				g.Position = UDim2.fromOffset(from.X, from.Y)
+				gsc.Scale = first and s * 0.92 or s * TINY / math.max(1, root.Size.X.Offset)
+				fade(1, 0)
+				local T_OPEN = first and 0.3 or 0.32
+				local info = TweenInfo.new(T_OPEN, first and Back or Quint, Enum.EasingDirection.Out)
+				TweenService:Create(g, info, { Position = UDim2.fromOffset(final.X, final.Y) }):Play()
+				TweenService:Create(gsc, info, { Scale = s }):Play()
+				fade(0, T_OPEN * 0.6)
+				task.delay(T_OPEN, function()
+					if id ~= animId or not Window.Visible then return end
+					cover.BackgroundTransparency = SURFACE_ALPHA
+					cover.Visible = true
+					root.Visible = true
+					killGhost()
+					tw(cover, 0.18, { BackgroundTransparency = 1 }, Quad)
+					task.delay(0.2, function()
+						if id ~= animId then return end
+						cover.Visible = false
+						opening = false
+						if Window._settleTabs then Window._settleTabs() end
+					end)
+				end)
 			end
 		else
 			revealed = true
 			if Window._finishBuild then Window._finishBuild() end
-			if blur then tw(blur, 0.3, { Size = 0 }) end
+			if blur then
+				tw(blur, 0.3, { Size = 0 })
+				task.delay(0.32, function() if id == animId and not Window.Visible and blur then blur.Enabled = false end end)
+			end
 			if not opening or not homePos then homePos = root.Position end
 			opening = false
 			local home = homePos
 			if instant then
 				root.Visible = false
+				exitGroup()
+				cover.Visible = false
 			else
-				enterGroup()
-				local to = toggleAnchor()
-				local info = TweenInfo.new(CLOSE_T, Quint, Enum.EasingDirection.In)
-				TweenService:Create(root, info, { Position = UDim2.fromOffset(to.X, to.Y) }):Play()
-				TweenService:Create(scale, info, { Scale = s * TINY / math.max(1, root.Size.X.Offset) }):Play()
-				TweenService:Create(fadeGroup, info, { GroupTransparency = 1 }):Play()
-				task.delay(CLOSE_T, function() if id == animId then landing(to) end end)
-				task.delay(CLOSE_T + 0.02, function()
+				exitGroup()
+				root.Position, scale.Scale = home, s
+				cover.Visible = true
+				cover.BackgroundTransparency = 1
+				tw(cover, 0.1, { BackgroundTransparency = SURFACE_ALPHA }, Quad)
+				task.delay(0.1, function()
 					if id ~= animId or Window.Visible then return end
 					root.Visible = false
-					exitGroup()
-					scale.Scale = s
-					root.Position = home
+					cover.Visible = false
+					local g, gsc, fade = makeGhost()
+					local here = screenCenter(home)
+					g.Position = UDim2.fromOffset(here.X, here.Y)
+					gsc.Scale = s
+					local to = toggleAnchor()
+					local info = TweenInfo.new(CLOSE_T - 0.06, Quint, Enum.EasingDirection.In)
+					TweenService:Create(g, info, { Position = UDim2.fromOffset(to.X, to.Y) }):Play()
+					TweenService:Create(gsc, info, { Scale = s * TINY / math.max(1, root.Size.X.Offset) }):Play()
+					fade(1, CLOSE_T - 0.06, Quint, Enum.EasingDirection.In)
+					task.delay(CLOSE_T - 0.06, function()
+						if id ~= animId then return end
+						killGhost()
+						landing(to)
+					end)
 				end)
 			end
 		end
@@ -1302,6 +1376,7 @@ function Library:CreateWindow(opts)
 	Window.Toggle = Window.Minimize
 	minBtn.Activated:Connect(function() setVisible(false) end)
 
+	buildYield()
 	-- minimize key
 	local minimizeKey = opts.MinimizeKey or Enum.KeyCode.RightShift
 	local minBind = { Key = parseKey(minimizeKey), Mode = "Always", State = false }
@@ -1314,6 +1389,7 @@ function Library:CreateWindow(opts)
 	local function divider(parent, order)
 		return new("Frame", { Size = UDim2.fromOffset(1, 14), BackgroundColor3 = Color3.new(1, 1, 1), BackgroundTransparency = 0.9, LayoutOrder = order, Parent = parent })
 	end
+	buildYield()
 	if opts.StatusBar ~= false then
 		local vp = viewport()
 		local small = isTouch or vp.X < 1000 or vp.Y < 600
@@ -1369,9 +1445,9 @@ function Library:CreateWindow(opts)
 		animate(function() frames += 1 end)
 		task.spawn(function()
 			while not Library.Unloaded and sb.Parent do
-				local start = frames
+				local start, t0 = frames, os.clock()
 				task.wait(0.5)
-				tw(fpsN, 0.4, { Value = (frames - start) * 2 }, Quad)
+				tw(fpsN, 0.4, { Value = (frames - start) / math.max(os.clock() - t0, 1e-3) }, Quad) -- real elapsed, not an assumed 0.5 s
 				local ping = 0
 				pcall(function() ping = Stats.Network.ServerStatsItem["Data Ping"]:GetValue() end)
 				tw(pingN, 0.4, { Value = ping }, Quad)
@@ -1407,7 +1483,7 @@ function Library:CreateWindow(opts)
 
 		task.defer(function()
 			setExpanded(true, true)
-			task.delay(opts.Splash == false and 0.1 or 1.9, function()
+			task.delay(opts.Splash ~= true and 0.1 or 1.9, function()
 				tw(sb, 0.6, { Position = UDim2.new(1, X, 0, 14) }, Back)
 			end)
 		end)
@@ -1482,6 +1558,7 @@ function Library:CreateWindow(opts)
 		end }
 	end
 
+	buildYield()
 	-- Dialog
 	function Window:Dialog(d)
 		d = d or {}
@@ -1535,6 +1612,7 @@ function Library:CreateWindow(opts)
 		return { Close = close }
 	end
 
+	buildYield()
 	-- Server browser
 	do
 		local SB = { title = "Servers", cards = {}, sort = "Most", refresh = nil, open = false, loading = false }
@@ -1912,6 +1990,7 @@ function Library:CreateWindow(opts)
 
 	function Window:Notify(n) return Library:Notify(n) end
 
+	buildYield()
 	-- Tabs
 	local current
 	local tabCount = 0
@@ -2041,6 +2120,7 @@ function Library:CreateWindow(opts)
 	Window.AddDivider, Window.CreateDivider = Window.Divider, Window.Divider
 
 	function Window:CreateTab(t)
+		buildYield()
 		t = type(t) == "table" and t or { Title = tostring(t) }
 		tabCount += 1
 		sideOrder += 1
@@ -2220,6 +2300,7 @@ function Library:CreateWindow(opts)
 
 		-- Sections
 		local function makeSection(title, sideName)
+			buildYield()
 			Tab._count += 1
 			local parentCol = (sideName == "Right" and not single) and rightCol or leftCol
 			local card = new("Frame", {
@@ -3348,6 +3429,7 @@ function Library:CreateWindow(opts)
 		if tab then selectTab(tab) end
 	end
 
+	buildYield()
 	-- Command palette
 	local paletteOpen = false
 	local function openPalette()
@@ -3441,6 +3523,7 @@ function Library:CreateWindow(opts)
 		renderTitle()
 	end
 
+	buildYield()
 	-- Build-up on open
 	local buildToken = 0
 	local wraps = {}
@@ -3585,9 +3668,10 @@ function Library:CreateWindow(opts)
 		at(0.12 + #wraps * 0.06 + 0.45, function() unwrapAll() end)
 	end
 
+	buildYield()
 	-- Splash, then the window opens
 	local function reveal() setVisible(true) end
-	if opts.Splash == false then
+	if opts.Splash ~= true then -- off unless asked for: scripts bring their own loader
 		task.defer(reveal)
 	else
 		local sp = new("Frame", { Size = UDim2.fromScale(1, 1), BackgroundColor3 = Color3.new(0, 0, 0), BackgroundTransparency = 1, ZIndex = 200, Parent = Screen })
