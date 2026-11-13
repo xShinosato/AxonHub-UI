@@ -580,12 +580,17 @@ local NotifyHolder = new("Frame", {
 })
 local function toastWidth()
 	local vp = viewport()
-	return math.floor(math.min(Library._notifyMaxWidth or TOAST.MaxWidth, vp.X - TOAST.Margin * 2))
+	local phone = isTouch and (vp.Y < 560 or vp.X < 760)
+	return math.floor(math.min(Library._notifyMaxWidth or (phone and 240 or TOAST.MaxWidth), vp.X - TOAST.Margin * 2))
 end
+local notifyScale = new("UIScale", { Parent = NotifyHolder })
 local function placeHolder()
 	local vp = viewport()
 	local w = toastWidth()
-	NotifyHolder.Size = UDim2.fromOffset(w, vp.Y - TOAST.Margin * 2)
+	-- phones: toasts at 80%, like the status bar, so they do not cover the window
+	local phone = isTouch and (vp.Y < 560 or vp.X < 760)
+	notifyScale.Scale = phone and 0.8 or 1
+	NotifyHolder.Size = UDim2.fromOffset(w, (vp.Y - TOAST.Margin * 2) / notifyScale.Scale)
 	if isTouch then
 		NotifyHolder.Position = UDim2.new(1, -10, 0, GuiService:GetGuiInset().Y + 8)
 	else
@@ -908,7 +913,8 @@ function Library:CreateWindow(opts)
 
 	local useBlur = opts.Blur ~= false
 	local surface = new("Frame", { Name = "Surface", Size = UDim2.fromScale(1, 1), ClipsDescendants = true, Parent = root })
-	darkGlass(surface, R.Window, useBlur and 0.2 or 0.08)
+	-- on touch the game's own buttons sit under the window: a denser surface keeps them from showing through
+	darkGlass(surface, R.Window, isTouch and 0.05 or (useBlur and 0.2 or 0.08))
 	local blur
 	if useBlur then
 		pcall(function()
@@ -1139,13 +1145,26 @@ function Library:CreateWindow(opts)
 	drawerCatcher.Activated:Connect(function() setDrawer(false) end)
 
 	local MIN_W, MIN_H = 340, 260
+	-- phones: build at a compact size, then scale into ~3/4 of the width so the
+	-- game's own side buttons, thumbstick and jump button stay free
+	local PHONE_W, PHONE_H = 620, 380
+	local function isPhone(vp) return vp.Y < 560 or vp.X < 760 end
+	Window._isPhone = function() return isPhone(viewport()) end
 	local function layout()
 		local vp = viewport()
 		local inset = GuiService:GetGuiInset()
 		local availW, availH = vp.X - 16, vp.Y - inset.Y - 16
-		local w = math.max(MIN_W, math.min(DESK_W, availW))
-		local h = math.max(MIN_H, math.min(DESK_H, availH))
-		local s = math.min(1, availW / w, availH / h)
+		local w, h, s
+		if isPhone(vp) then
+			w = math.max(MIN_W, math.min(DESK_W, PHONE_W))
+			h = math.max(MIN_H, math.min(DESK_H, PHONE_H))
+			s = math.min(1, (availW * 0.7) / w, (availH * 0.9) / h)
+			s = math.max(s, math.min(0.7, availW / w, availH / h))
+		else
+			w = math.max(MIN_W, math.min(DESK_W, availW))
+			h = math.max(MIN_H, math.min(DESK_H, availH))
+			s = math.min(1, availW / w, availH / h)
+		end
 		root.Size = UDim2.fromOffset(w, h)
 		scale.Scale = s
 		Window._scale = s
@@ -1305,7 +1324,7 @@ function Library:CreateWindow(opts)
 			ZIndex = 95, Parent = Screen,
 		}, { pad(0, 5, 0, 12), hlist(0) })
 		darkGlass(sb, R.Panel, 0.1, false)
-		new("UIScale", { Scale = small and 0.92 or 1, Parent = sb })
+		new("UIScale", { Scale = (isTouch and (vp.Y < 560 or vp.X < 760)) and 0.8 or (small and 0.92 or 1), Parent = sb })
 		Window.StatusBar = sb
 
 		local clip = new("Frame", { Size = UDim2.new(0, 0, 1, 0), BackgroundTransparency = 1, ClipsDescendants = true, LayoutOrder = 0, Parent = sb })
@@ -1674,7 +1693,7 @@ function Library:CreateWindow(opts)
 		local function build()
 			dock = new("CanvasGroup", { Name = "ServerBrowser", BackgroundTransparency = 1, GroupTransparency = 1, Visible = false, ZIndex = 80, Parent = root })
 			sheet = new("TextButton", { Text = "", AutoButtonColor = false, Position = UDim2.fromOffset(1, 1), Size = UDim2.new(1, -2, 1, -2), ClipsDescendants = true, ZIndex = 56, Parent = dock })
-			darkGlass(sheet, R.Window, (opts.Blur ~= false) and 0.2 or 0.08) -- the window's own surface
+			darkGlass(sheet, R.Window, isTouch and 0.05 or ((opts.Blur ~= false) and 0.2 or 0.08)) -- the window's own surface
 			-- top bar: the window's title style and its hover-only controls
 			local headF = new("Frame", { Size = UDim2.new(1, 0, 0, TOP_H), BackgroundTransparency = 1, ZIndex = 57, Parent = sheet })
 			local headText = new("Frame", { AnchorPoint = Vector2.new(0, 0.5), Position = UDim2.new(0, SP.Inset + SP.Card + SP.Text, 0.5, 0), Size = UDim2.new(1, -(SP.Inset + SP.Card + SP.Text + CTRL * 2 + 4 + SP.Inset + 8), 0, 32), BackgroundTransparency = 1, ZIndex = 57, Parent = headF }, {
