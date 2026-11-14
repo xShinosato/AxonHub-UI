@@ -2795,27 +2795,46 @@ function Library:CreateWindow(opts)
 					valueText:SetText(text, multi and ", " or "  ·  ")
 					valueText:TweenColor(text == "None" and T.Muted or T.Text)
 				end
+				-- option rows are built on first open, a few per frame: a 300-entry list costs nothing at launch
+				local built, gen = false, 0
+				local function matches(v)
+					local q = search and search.Text:lower() or ""
+					return q == "" or v:lower():find(q, 1, true) ~= nil
+				end
 				local function visibleCount()
 					local n = 0
-					for _, ro in pairs(optionRows) do if ro.btn.Visible then n += 1 end end
+					for _, v in ipairs(values) do
+						if matches(v) then n += 1 if n >= 6 then break end end
+					end
 					return n
 				end
 				local function height()
 					local n = math.min(math.max(visibleCount(), 1), 6)
 					return SP.Item * 2 + listTop + n * (OPT + OGAP) - OGAP + WPAD
 				end
+				local build
 				local function setOpen(v)
 					open = v
+					if v and not built then build() end
 					tw(body_, 0.38, { Size = UDim2.new(1, 0, 0, v and height() or 0) }, Quint)
 					tw(chev, 0.35, { Rotation = v and 180 or 0, ImageColor3 = v and T.Accent2 or T.Muted }, Back)
 				end
-				local function refreshRows()
-					for v, ro in pairs(optionRows) do
-						local sel = multi and el.Value[v] or (not multi and el.Value == v)
-						tw(ro.btn, 0.2, { BackgroundTransparency = sel and 0.88 or 1 })
-						tw(ro.label, 0.2, { TextColor3 = sel and T.Text or T.Sub })
-						tw(ro.check, 0.25, { ImageTransparency = sel and 0 or 1, Size = UDim2.fromOffset(sel and 14 or 6, sel and 14 or 6) }, Back)
+				local function isSel(v) return (multi and el.Value[v] or (not multi and el.Value == v)) and true or false end
+				local function paintRow(ro, v, animate)
+					local sel = isSel(v)
+					if ro.sel == sel then return end
+					ro.sel = sel
+					local bt, tc, it, sz = sel and 0.88 or 1, sel and T.Text or T.Sub, sel and 0 or 1, UDim2.fromOffset(sel and 14 or 6, sel and 14 or 6)
+					if animate then
+						tw(ro.btn, 0.2, { BackgroundTransparency = bt })
+						tw(ro.label, 0.2, { TextColor3 = tc })
+						tw(ro.check, 0.25, { ImageTransparency = it, Size = sz }, Back)
+					else
+						ro.btn.BackgroundTransparency, ro.label.TextColor3, ro.check.ImageTransparency, ro.check.Size = bt, tc, it, sz
 					end
+				end
+				local function refreshRows()
+					for v, ro in pairs(optionRows) do paintRow(ro, v, open) end
 				end
 				local function commit(silent)
 					display()
@@ -2823,14 +2842,17 @@ function Library:CreateWindow(opts)
 					if not silent then spawnSafe(o.Callback, el.Value) end
 					el:_fire(el.Value)
 				end
-				local function build()
+				local function clearRows()
+					gen += 1
+					built = false
 					for _, ro in pairs(optionRows) do ro.btn:Destroy() end
 					table.clear(optionRows)
-					for i, v in ipairs(values) do
-						local ob = new("TextButton", { Text = "", Size = UDim2.new(1, 0, 0, OPT), BackgroundColor3 = T.Accent, BackgroundTransparency = 1, LayoutOrder = i, Parent = list }, { corner(R.Small) })
+				end
+				local function makeRow(i, v)
+						local ob = new("TextButton", { Text = "", Size = UDim2.new(1, 0, 0, OPT), BackgroundColor3 = T.Accent, BackgroundTransparency = 1, LayoutOrder = i, Visible = matches(v), Parent = list }, { corner(R.Small) })
 						paint(ob, "BackgroundColor3")
 						local ol = new("TextLabel", { Text = v, TextSize = 13, TextColor3 = T.Sub, Position = UDim2.fromOffset(SP.Text - WPAD, 0), Size = UDim2.new(1, -40, 1, 0), TextXAlignment = Enum.TextXAlignment.Left, TextTruncate = Enum.TextTruncate.AtEnd, Parent = ob })
-						local ck = icon(ob, "check", 14, T.Accent2, { AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.new(1, -(SP.Text - WPAD + 7), 0.5, 0), ImageTransparency = 1 })
+						local ck = icon(ob, "check", 14, T.Accent2, { AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.new(1, -(SP.Text - WPAD + 7), 0.5, 0), ImageTransparency = 1, Size = UDim2.fromOffset(6, 6) })
 						paint(ck, "ImageColor3", "light")
 						ob.MouseEnter:Connect(function() tw(ol, 0.15, { TextColor3 = T.Text }) end)
 						ob.MouseLeave:Connect(function()
@@ -2855,9 +2877,25 @@ function Library:CreateWindow(opts)
 								task.delay(0.12, function() setOpen(false) end)
 							end
 						end)
-						optionRows[v] = { btn = ob, label = ol, check = ck }
-					end
-					refreshRows()
+						local ro = { btn = ob, label = ol, check = ck }
+						optionRows[v] = ro
+						paintRow(ro, v, false)
+				end
+				build = function()
+					clearRows()
+					built = true
+					local my, snap = gen, table.clone(values)
+					task.spawn(function()
+						local t0 = os.clock()
+						for i, v in ipairs(snap) do
+							if my ~= gen or el._dead or not list.Parent then return end
+							makeRow(i, v)
+							if i >= 12 and os.clock() - t0 > BUILD_BUDGET then
+								RunService.Heartbeat:Wait()
+								t0 = os.clock()
+							end
+						end
+					end)
 				end
 				function el:SetValues(list_)
 					table.clear(values)
@@ -2869,7 +2907,8 @@ function Library:CreateWindow(opts)
 						el.Value = nil
 						lost = true
 					end
-					build()
+					clearRows()
+					if open then build() end
 					display()
 					if open then setOpen(true) end
 					if lost then commit() end
@@ -2915,7 +2954,7 @@ function Library:CreateWindow(opts)
 				end
 
 				for _, v in ipairs(o.Values or o.Options or {}) do table.insert(values, tostring(v)) end
-				build()
+				-- rows wait for the first open
 				local def = o.Default
 				if def == nil and o.Value ~= nil then def = o.Value end
 				if type(def) == "number" and not multi and values[def] then def = values[def] end
