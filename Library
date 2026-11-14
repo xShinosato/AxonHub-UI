@@ -2038,11 +2038,12 @@ function Library:CreateWindow(opts)
 	local function liveScale() return math.max(0.01, scale.Scale) end
 	local function keepTabInView(tab)
 		local s = liveScale()
-		local top = (tab.Button.AbsolutePosition.Y - tabScroll.AbsolutePosition.Y) / s
-		local bottom = top + tab.Button.AbsoluteSize.Y / s
-		local view = tabScroll.AbsoluteSize.Y / s
+		local top = tab.Button.AbsolutePosition.Y - tabScroll.AbsolutePosition.Y -- screen pixels, like CanvasPosition
+		local bottom = top + tab.Button.AbsoluteSize.Y
+		local view = tabScroll.AbsoluteSize.Y
+		local pad_ = SIDE_PAD * s
 		local y = tabScroll.CanvasPosition.Y
-		if top < SIDE_PAD then y += top - SIDE_PAD elseif bottom > view - SIDE_PAD then y += bottom - view + SIDE_PAD else return end
+		if top < pad_ then y += top - pad_ elseif bottom > view - pad_ then y += bottom - view + pad_ else return end
 		tw(tabScroll, 0.35, { CanvasPosition = Vector2.new(0, math.max(0, y)) })
 	end
 
@@ -3438,9 +3439,12 @@ function Library:CreateWindow(opts)
 		local dim = new("TextButton", { Text = "", Size = UDim2.fromScale(1, 1), BackgroundColor3 = Color3.new(0, 0, 0), BackgroundTransparency = 1, ZIndex = 70, Parent = overlay }, { corner(R.Window) })
 		tw(dim, 0.25, { BackgroundTransparency = 0.45 })
 		local w = math.min(440, root.Size.X.Offset - 32)
-		local card = new("Frame", { AnchorPoint = Vector2.new(0.5, 0), Position = UDim2.new(0.5, 0, 0, TOP_H - 6), Size = UDim2.fromOffset(w, 52), ClipsDescendants = true, ZIndex = 71, Parent = dim })
+		local centred = isTouch -- phones: the middle of the window; desktop: under the top bar
+		local restPos = centred and UDim2.fromScale(0.5, 0.5) or UDim2.new(0.5, 0, 0, TOP_H + 8)
+		local awayPos = centred and UDim2.new(0.5, 0, 0.5, -14) or UDim2.new(0.5, 0, 0, TOP_H - 6)
+		local card = new("Frame", { AnchorPoint = Vector2.new(0.5, centred and 0.5 or 0), Position = awayPos, Size = UDim2.fromOffset(w, 52), ClipsDescendants = true, ZIndex = 71, Parent = dim })
 		darkGlass(card, R.Panel, 0.05)
-		tw(card, 0.4, { Position = UDim2.new(0.5, 0, 0, TOP_H + 8) }, Back)
+		tw(card, 0.4, { Position = restPos }, Back)
 		local box = new("TextBox", { Text = "", PlaceholderText = "Search features", PlaceholderColor3 = T.Muted, TextSize = 15, ClearTextOnFocus = false, Position = UDim2.fromOffset(42, 0), Size = UDim2.new(1, -54, 0, 52), TextXAlignment = Enum.TextXAlignment.Left, ZIndex = 72, Parent = card })
 		icon(card, "search", 18, T.Muted, { Position = UDim2.fromOffset(15, 17), ZIndex = 72 })
 		local results = new("ScrollingFrame", { Position = UDim2.fromOffset(6, 52), Size = UDim2.new(1, -12, 1, -58), BackgroundTransparency = 1, CanvasSize = UDim2.new(), AutomaticCanvasSize = Enum.AutomaticSize.Y, ScrollBarThickness = 2, ZIndex = 72, Parent = card }, { vlist(2) })
@@ -3452,7 +3456,7 @@ function Library:CreateWindow(opts)
 			closed = true
 			paletteOpen = false
 			tw(dim, 0.2, { BackgroundTransparency = 1 })
-			tw(card, 0.2, { Position = UDim2.new(0.5, 0, 0, TOP_H - 6) })
+			tw(card, 0.2, { Position = awayPos })
 			card.Visible = false
 			task.delay(0.22, function() dim:Destroy() end)
 		end
@@ -3463,7 +3467,7 @@ function Library:CreateWindow(opts)
 			task.delay(0.08, function()
 				if not entry.Row.Parent then return end
 				local pg = entry.Tab.Page
-				local y = (entry.Row.AbsolutePosition.Y - pg.AbsolutePosition.Y) / (Window._scale or 1) + pg.CanvasPosition.Y - 40
+				local y = (entry.Row.AbsolutePosition.Y - pg.AbsolutePosition.Y) + pg.CanvasPosition.Y - 40 * (Window._scale or 1) -- CanvasPosition is in screen pixels
 				tw(pg, 0.5, { CanvasPosition = Vector2.new(0, math.max(0, y)) })
 				local flash = new("Frame", { Size = UDim2.fromScale(1, 1), BackgroundColor3 = T.Accent, BackgroundTransparency = 0.7, ZIndex = 0, Parent = entry.Row }, { corner(R.Control) })
 				task.delay(0.35, function()
